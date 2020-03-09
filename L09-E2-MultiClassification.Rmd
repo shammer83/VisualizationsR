@@ -1,0 +1,366 @@
+---
+title: "L09-E2-Multi Classification"
+output: html_notebook
+---
+
+## Exercise Instructions
+
+* Complete all cells as instructed, replacing any ??? with the appropriate code
+
+* Execute RStudio **Session** > **Restart & Run All Chunks** and ensure that all code blocks run without error
+
+# Multivariate Classification
+
+Now that we have worked through an example in the last exercise, with just on feature, let's try a more realistic example with multiple features. For this example, we will use an HR data set from [Kaggle](https://www.kaggle.com/ludobenistant/hr-analytics). Our goal is to classify employees likely to leave the company. The label has two classes, $\{0, 1\}$, for employees who did not or did leave the company. We will use 8 features to train the classifier. 
+
+
+```{r}
+# Load libraries
+library(tidyverse)
+```
+
+As a first step, the data needs to be loaded and prepared for analysis. Execute this code and examine the results to get an initial feel for these data. 
+
+**Programming note:** The code in the cell below performs the following operations:
+1. Read the raw csv file.
+2. Use a chain of dplyr verbs to perform the following transformations of the data frame:
+  - Convert the salary levels to numeric values, $\{1, 2, 3\}$.
+  - Convert the label values to `yes` and `no`.
+  - Remove unneeded columns.
+3. The label is converted to a categorical variable with the `as.factor` function. 
+***
+
+```{r}
+# Read the csv file 
+
+# Store in hr variable
+# Hint: read_csv()
+hr <- "HR_comma_sep.csv" %>% read_csv() 
+
+## Create salary_numeric: low = 1, medium = 2, else 3
+# Create left factor: 1 = yes, else no
+# Remove columns: -sales, -salary
+# Hint: if_else(), as.factor()
+hr <- hr %>% 
+  mutate(salary_numeric = if_else(salary == 'low', 1, 
+                                  if_else(salary == 'medium', 2, 3)),
+         left = if_else(left == 1, 'yes', 'no') %>% as.factor ()) %>%
+  select(-sales, -salary)
+
+# Explore result
+hr %>% glimpse()
+```
+
+### Exploring the data
+
+Before building any machine learning model it is a good idea to explore the data so we get an idea of the structure. We will look at some characteristics of the data and visualize these data. 
+
+We can have a quick look at the number of cases which have each value of the label. The R `table` function computes a count by unique category of a variable. Execute this code and examine the house. 
+
+```{r}
+# Display the frequency table of left
+# Hint: table()
+hr$left %>% table ()
+```
+
+We must separate the data frame columns with features from the label so we can explore these data. Execute the code below to create a list of column names for the features.
+
+```{r}
+# create a cols array containing
+# all columns names except left
+# Hint: select(), names()
+cols <- hr %>% 
+  select (-left) %>% 
+  names ()
+
+# Explore result
+# Hint: print()
+cols %>% print ()
+```
+
+Next, we will use some **visualization** techniques develop an understanding of the relationship between the label categories and the values of the features. Visualization of these data is a bit tricky. We will try two different types of graphics displays to improve our understanding. 
+
+For our first set of views, we will use **violin** plots. Recall that violin plots show the probability density of a variable on one axis, **conditioned** (grouped-by) the category of another variable on the other axis. In this case, we will use the two categories of the label for the horizontal axis. 
+
+The code in the cell below creates a violin plot for each of the features. Execute this code and examine the results, paying attention to how well, or not, feature separates the label values.  
+
+***
+**Programming note:** The function displays a violin plot for the column specified with the `col` argument. Notice the use of `aes_string` which allows the column name to be specified as a string. The `walk` operator integrates over the list of column names calling the function each time. The last argument of `walk` fills the second argument of the function. 
+***
+
+```{r}
+# Create violin plot fucntion
+# Include quantile lines
+# Hint: geom_violin(), draw_quantiles parameter
+plot.left.v <- function(col, df){
+    p1 <- df %>% 
+      ggplot(aes_string('left', col)) + 
+      geom_violin (draw_quantiles = c(0.25, 0.5, 0.75), 
+              fill = 'blue', alpha = 0.3, size = 1.0)
+  
+    # print result
+    # Hint: print()
+    p1 %>% print ()
+}
+
+# Call plot function for each value in cols
+# Hint: walk()
+cols %>% walk (plot.left.v, hr)
+```
+
+Notice that the relationships between these data and the categories of the label are rather complex.
+- Some features have a non-linear relationship with the categories of the label. For example, some features may have multiple interleaved values for each category.
+- Some other features do not seem to separate the cases at all. 
+
+### Another view of data
+
+To get a bit more insight into these data, let's create and examine a series of **dot plots**. The dot plots resemble a histogram, but shows the density as a series of stacked dots. The higher the stack, the denser the probability distribution.  
+
+The code in the cell below displays dot plots for each of the features, stratified by the label categories. The structure of this code is nearly identical to the code used for the violin plots. Execute this code and examine the results for each feature. 
+
+```{r}
+# Create dotplot function
+# Facet on left
+# Hint: geom_dotplot(), facet_wrap()
+plot.left <- function(col, df, bins = 60){
+    binwidth <- (max(df[, col]) - min(df[, col])) / bins
+    p1 <- ggplot(df, aes_string(col)) + 
+           geom_dotplot (dotsize = 0.5, method = "histodot", binwidth = binwidth) +
+           facet_wrap ( ~ left)
+    
+    # print result
+    # Hint: print()
+    p1 %>% print ()
+}
+
+# Call plot function for each value in cols
+# Hint: walk()
+cols %>% walk (plot.left, hr)
+```
+
+Carefully examine these plots and compare them to the violin plots. While the dot plots show more detail, the overall conclusion are roughly the same, with one possible exception:
+
+1. The values of the feature have a nonlinear relationship to the categories of the label. In several cases, there are alternating segments of the values of the feature stratified by the label categories.
+2. In several cases, the values at the end of the range for a feature are different for different label categories. This relationship was not as obvious with the violin plots.
+3. The values for at least one feature are nearly the same when stratified by the label categories.
+
+These complex relationships between the feature values and label category will make it difficult for our linear classifier to separate the cases. None the less, we will press on. 
+
+### Train the classifier
+
+We have seen that the relationship between the features and the categories in the labels. It is clear that a linear classifier will not be the ideal tool. However, for the purpose of this lesson, we will use logistic regression.  
+
+The first step in constructing our machine learning model is to prepare the data. These data are fairly clean, so we only need to preform two steps:
+
+1. Ensure there are no duplicated cases in the data set. Duplicated cases can bias the training of the model. Further, duplicated cases confound the splitting of the data into training and test data sets. 
+2. normalize the numeric features. The code in the cell below iterates over the features in the data frame and apply the normalize functions. 
+
+Execute the code. 
+
+```{r}
+# Remove duplicate rows
+# Hint: distinct()
+print(str_c("Original row count: ", hr %>% nrow()))
+hr <- hr %>% distinct ()
+print(str_c("distinctated row count: ", hr %>% nrow()))
+
+# Create normalize function with a mean of 0 
+# and standard deviation of 1
+# Hint: mean(), sd()
+normalize <- function(x){ (x - mean(x))/sd(x)
+}
+# Apply normalize to all columns except left
+# Hint: mutate_at(), vars()
+hr <- hr %>% mutate_at(vars(-left), normalize)
+
+# Explore result
+hr %>% glimpse()
+```
+
+We need to test the model we train in an unbiased manner. If we test the performance of any machine learning model with the same data used to train it, we would likely see **unrealistically optimistic** results. You can imagine a case where the machine learning model is severely overfit (for example a **saturated model**), and has learned the data perfectly. Such a model would produce excellent test results when presented with these same training data. However, it is unlikely that such a model would **generalize** and work well new input cases. If tested with data not in the training set, the performance of such a model will be poor. 
+
+To avoid the aforementioned problems, we must split our data set into two **mutually exclusive** subsets. We call these subsets the **training data set** and the **test data set**. The code in the cell below performs the following steps.
+1. The dplyr `sample_frac` verb is used to create a randomly sampled training data set.
+2. The R `setdiff` function is used to filter for cases (rows) of the original data not in the training data set. This is our test data set.
+3. The number of rows in the two subsets are verified. 
+
+Execute this code and verify the results. 
+
+```{r}
+# Set seed for reproducability
+# Hint: set.seed()
+set.seed(1222)
+
+# Get 70% of the data for training
+# Store in hr.train
+# Hint: sample_frac()
+hr.train <- hr %>% 
+  sample_frac(0.7)
+
+# Creat test set with the remaining rows
+# Store in hr.test
+# Hint: setdiff()
+hr.test <- hr %>%  
+  setdiff(hr.train)
+
+# Display row counts of hr.train and hr.test
+# Hint: nrow()
+print(str_c("hr.train rows: ", nrow(hr.train)))
+print(str_c("hr.test rows: ", nrow(hr.test)))
+
+# Compare hr.train + hr.test to hr
+nrow(hr.test) + nrow(hr.train) == nrow(hr)
+```
+
+With this minimal preparation to the data, we are ready to train the **generalized linear model (glm)** classifier. The R `glm` function implements a generalization of linear regression. In this particular case we use three arguments to this function as follows:
+
+1. **Model formula:** We use the R formula language to specify that all features are used to model the label, `left`, as follows:
+$$left\ \sim\ .\\
+where\\
+. = symbolizes\ other\ columns
+$$
+2. **Data set:** We are using the training data set which represents 70% of the original data.
+3. **Family:** The family is the distribution family for the label. In this case, we specify the **binomial** function since we have a two-class classifier. 
+
+Execute the code in the cell below and examine the model summary and the confidence interval of the coefficients.
+
+```{r}
+# Create logistic binomial model of left ~ .
+# Hint: glm(), binomial()
+hr.mod1 <- glm (left ~ . , data = hr.train, 
+               family=binomial())
+
+# View model summary
+# Hint: summary()
+hr.mod1 %>% summary ()
+
+# Calculate the confidence interval for the model coefficients
+cat('Confidence intervals of model coefficients')
+hr.mod1 %>% confint()
+```
+This model appears to be a reasonable fit. When examining these results, notice the following:
+
+- The standard errors of all coefficients is significantly are all at least an order of magnitude smaller than the coefficient values themselves.
+- The z-values are all reasonably large, leading to small p-value indicating the coefficients are significant. 
+- There is a is a notable difference between the Null deviance and the Residual deviance, along with a reasonable value of AIC, indicating that the model is explaining some variation in the data. 
+- None of the confidence intervals of the coefficients overlaps zero.
+
+### Scoring the model
+
+With the  model trained, we will now score the model. The coded in the cell below does the following:
+1. The raw model score is computed from the trained model using the `predict` method. Notice that **the test data set** is now being used. 
+2. A dot plot is made of the raw scores stratified by the (known) label categories. 
+
+Execute this code and examine the results. 
+
+```{r}
+# Predict results using model and test data
+# Hint: predict()
+hr.test$score <- predict(hr.mod1, newdata = hr.test )
+
+# Calculate binwidth for dotplot
+# Hint: max(), min()
+binwidth <- ( max(hr.test[, 'score']) - min(hr.test[, 'score'])) / 60
+
+# Create dotplot using above binwidth for x = score
+# facet on left
+# Hint: geom_dotplot(), facet_wrap()
+ggplot(hr.test, aes(x = score)) + 
+  geom_dotplot (dotsize = 0.5, method = "histodot", binwidth = binwidth) +
+  facet_wrap ( ~ left) +
+  labs(title="Model Score by Left or Stay",
+       x="Score count", y="Count")
+```
+
+Examine the distribution of scores for both label categories. The values for the `yes` category are shifted to the right. However, there is considerable overlap between values for `yes` and `no`. This is not surprising, given the complex relationship between the features and the label categories. 
+
+Now, we need to transform these scores into categories. The first step in doing so is to apply a **logistic function** to the numeric scores. In technical terms, this operation transforms the **Binomial** regression to a logistic regression. Execute the code in the cell below to apply the transformation and display the result. 
+
+```{r}
+# Tramsform score using logistic function
+# Hint: mutate(), exp()
+hr.test <- hr.test %>% mutate(score = exp(score)/(1 + exp(score)))
+
+# Calculate binwidth for dotplot
+# Hint: max(), min()
+binwidth = (max(hr.test[, 'score']) - min (hr.test[, 'score'])) / 60
+
+# Create dotplot using above binwidth for x = score
+# facet on left
+# Hint: geom_dotplot(), facet_wrap()
+ggplot(hr.test, aes(x = score)) + 
+       geom_dotplot(dotsize = 0.5, method = "histodot", binwidth = binwidth) +
+  facet_wrap ( ~ left) +
+  labs(title="Model Score by Left or Stay",
+       x="Score count", y="Count")
+```
+
+You can see that the transformed score is the now in the range $\{ 0, 1 \}$. Further, the transformed scores for `yes` are skew to the right with respect to the `no` scores, and with considerable overlap. 
+
+There is one last step to finish the classification. We need to convert the score to the category values. We will set the categories based on values greater than or less than and equal to a **threshold** setting the value to `yes` or `no`. 
+
+The code in the cell below sets the threshold at $0.5$. Execute the code and examine the results.
+
+```{r}
+# Create score.pred factor: score > 0.5 then yes else no
+# Hint: mutate(), if_else()
+hr.test <- hr.test %>% mutate (score.pred = if_else (score > 0.5, "yes", "no") %>% as.factor())
+
+# Explore result
+hr.test %>% glimpse()
+```
+### Evaluating the classifier  
+
+Now that we have trained the model, computed scores, and performed classification based on a threshold value, we can evaluate the performance of the classifier. The code in the cell below computes and prints the confusion matrix and other performance metrics using the test data. Execute this code and examine the results.
+
+
+```{r}
+# Create confusion matrix of hr.test$left and hr.test$score.pred
+# Hint: caret::confusionMatrix
+caret::confusionMatrix (data = hr.test$score.pred , 
+                       reference = hr.test$left, 
+                       mode = "prec_recall")
+```
+
+Notice the following about these results:
+
+- The overall accuracy is about 83%. On the face of it, this would appear to be a good result.   
+- The confusion matrix tells another story. about 5 out of 6 yes cases are misclassified. Most of the no cases are correctly classified. This imbalance between errors in classifying the yes cases and the majority no explains the high accuracy figure.   
+- The precision is significantly larger than the recall, which is a result of the imbalance in accuracy between the `no` and `yes` cases.    
+- As expected, the F1 score is between the precision and the recall.    
+
+# <font color="blue">Adjust category threshold</font>   
+
+In the foregoing example, a threshold of 0.5, which gives equal weight to each class. This threshold setting produced poor classification of the `yes` cases. As mentioned before, from the point of view of the company, this classifier will be of limited use in identifying employees likely to leave. 
+
+You can adjust the trade-off between errors in the two label categories by changing the threshold. In this exercise you will try the following threshold values, $\{ 0.45, 0.40, 0.35, 0.30, 0.25 \}$. 
+
+**Hint:** Write a function that computes the score, for each of these threshold values and prints the confusion matrix. You can then use the `walk` operator to iterate over the list of threshold values. 
+
+```{r}
+# Create a test.threshold fucntion that take a threshold and a data frame
+
+test.threshold <- function(thresh = 0.5, hr) {
+  
+  # Calculat the new prediction based on the threshold
+  hr <- hr %>% mutate (score.pred = if_else(hr$score > thresh, 'yes', 'no') %>% as.factor())
+  cat('For threshold of ', thresh, ' performance is: \n')
+  print(caret::confusionMatrix(data = hr$score.pred, reference = hr$left, mode = "prec_recall"))
+  cat('\n')
+}
+
+# Create vector of thresholds to try
+threshs = c(0.45, 0.40, 0.35, 0.30)
+
+# Call test.threshold function for each value of threshs
+# Hint: walk()
+threshs %>% walk (test.threshold, hr.test )
+```
+
+Which threshold do you prefer?
+
+# Summary
+
+In this lesson you have done the following:
+
+- Constructed and evaluated a multivariate (multiple feature) classifier for a real-world example.

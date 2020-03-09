@@ -1,0 +1,448 @@
+---
+title: "L09-E1-Classification"
+output: html_notebook
+---
+
+## Exercise Instructions
+
+* Complete all cells as instructed, replacing any ??? with the appropriate code
+
+* Execute RStudio **Session** > **Restart & Run All Chunks** and ensure that all code blocks run without error
+
+# Introduction to Classification
+
+## Overview
+
+**Classification** is one of the most widely used machine learning methods. Classifiers divide cases into specific **classes**. Broadly, there are two types of classifiers:
+- **Two-class** or **binary**, where cases are placed into one of two classes, often labeled $\{positive\, negative\}$ or $\{1, 0\}$.
+- **Multi-class** where cases are placed into three or more classes. 
+
+Classifiers are so widely used because they are so useful. Some of the applications of classifiers include:
+
+- Identify customers most likely to churn to a competitor
+- Spot fraudulent payment accounts
+- Identify students most likely to fail a course
+- Find machinery in need of maintenance
+- Find relevant documents
+- Identify handwritten characters
+- Identify patients with a disease
+
+Once you have completed this lesson you will be able to apply logistic regression to two class classification. Specifically, in this lesson you will explore:
+
+- **Basics of classifiers** using logistic regression as an example.
+- **Train a simple classifier** using a single feature.
+- **Update the model** so it is not over-fit.
+- **Evaluation of classifier** using the two-class classification example.
+- **Construct and evaluate** a classifier for a real-world example.
+
+
+
+## Basics of Classifiers
+
+Classifiers are a **supervised machine learning** method. By supervised, we mean that the classifier is **trained** using know **label values**. The label is a column in each training case which contains the known value we want our algorithm to learn to predict.   
+
+A classifier is trained to predict the label using one or more **features**. Features are variables which provide information on which class a label is in. The predicted class or category is known as the **score**. 
+
+Once a classifier model is trained, predictions of unknown labels can be made from new cases (sets of feature values). In production we, want our model to reliably create accurate predictions for cases the model has not seen. We say that a model with this behavior **generalizes** well. 
+
+
+
+```{r}
+# Load libraries
+library(HistData) ## Includes the GaltonFamilies data
+library(tidyverse)
+```
+
+### Overview of logistic regression
+
+Let's look at a specific example of a binary classifier. The **logistic regression** model is a linear model. Logistic regression is widely used as a classification model. Logistic regression is linear model, with a binary response, `{False, True}` or `{0, 1}`.  However, the response is computed as a log likelihood. In the simplest case, the response has a Binomial distribution. 
+
+The response of the linear model is transformed to the log likelihood using a sigmoidal function, also known as the **logistic function**:
+
+$$f(x) = \frac{1}{1 + e^{-\kappa(x - x_0)}} \\
+\kappa = steepness$$
+
+Execute the code in the cell below to compute and plot an example of the logistic function.
+
+```{r}
+# Create a logistic plot function
+# named plot.logistic 
+plot.logistic <- function(v){
+  
+  # Create a sequence of 500 numbers from -7 to 7
+  # Hint: seq
+  xseq <- seq(-7, 7, length.out = 500)
+  
+  # Calculate the logistic regression of the sequence of numbers
+  # Hint:exp()
+  logistic <- exp(xseq - v)/(1 + exp(xseq - v))
+  
+  # Create a dataframe of the sequence as x and the 
+  # logisitic regression as y
+  # Hint: data.frame()
+  df <- data.frame(x = xseq, y = logistic)
+  
+  # Create a line plot
+  # Add vertical line at v and horizontal line at 0.5
+  # Hints: geom_line(), geom_vline(), geom_hline()
+  df %>% ggplot(aes(x,y)) +
+    geom_line(size = 1.5, color = 'red') +
+    geom_vline(xintercept = v, size = 1, color = 'black') +
+    geom_hline(yintercept = 0.5 , size = 1, color = 'black') +
+    theme_grey(base_size = 12) +
+    labs(title="Logistic function for two-class classification",
+         x="Value of x", y="log likelihood")
+}
+
+# Call the plot function with a v of 0
+plot.logistic( 0 )
+```
+
+Let's make this a bit more concrete with a simple example. Say we have a linear model for a single feature $x$:
+
+$$\hat{y} = \beta_0 + \beta_1\ x\\
+where\\
+\beta_0 = intercept\ coefficient\\
+\beta_1 = slope\ coefficient$$
+
+Now, depending on the value of $\hat{y}$ we want to classify the output from a logistic regression model as either `0` or `1`. We can use the linear model in the logistic function as follows:
+
+$$F(\hat{y}) = \frac{1}{1 + e^{-\kappa(\beta_0 + \beta_1\ x)}} $$
+
+In this way we transform the continuous output of the linear model defined on $-\infty \le \hat{y} \le \infty$ to a binary response, $0 \le F(\hat{y}) \le 1$
+
+### Classification Example
+
+The Galton Family data in the R HistData package are famous in the history of statistics. Francis Galton (1822-1911) used these data in the 1886 paper where he introduced the concept of regression. We will use these data for another purpose. We will use these data to classify the gender of adult children using their heights.
+In this example, we will use a single feature, height of the adult children. The label is the gender of the adult child. We will logistic regression to classify the label using the one feature, making a simple classification problem.
+
+As a first step, execute the code in the cell below to load and examine these data.
+
+
+```{r}
+## Ensure the examples are reproducible.
+set.seed(3456)   
+
+# Explore GaltonFamilies
+GaltonFamilies %>% glimpse() 
+
+# Display help on data
+? GaltonFamilies
+```
+
+The last two columns in this data frame contain the label and the feature we will use.
+
+Next, let's see how the values of the feature relate to the value of the label. The ideal feature should have values that **separate** the categories of the label. By separate, we mean the feature has a distinct range of values for each label category. Any overlap in the range of values of a feature for different label categories will likely result in **classification errors**.  
+
+### Exploring and preparing the data
+In order to examine the degree of separation achieved by the one feature we will create side by side violin plots. Execute this code, and examine the results. 
+
+```{r}
+# Violin Plot x = gender, y = childHeight
+# Include quantile lines
+# Hint: geom_violin(), draw_quantiles parameter
+GaltonFamilies %>% ggplot(aes(x = gender, y = childHeight)) +
+  geom_violin( draw_quantiles = c(0.25, 0.5, 0.75), 
+              fill = 'blue', alpha = 0.3, size = 1.0) +
+  labs(title="Height of Adult Children by Gender",
+       x="Gender of Adult Children", y="Height of Adult Children")
+```
+
+This feature separates the cases fairly well. Notice that the overlap of heights by gender are in the upper quartile of `female` and lower quartile of `male`. The bulk of feature values for each category do not overlap. Thus, we expect our linear classifier to work fairly well. 
+
+These data look promising, and there does not seem to be any serious problems. Let's move on to constructing a classification model. The first step in building any machine learning model is to normalize the numeric features. In this case, there is only one feature, but in the interest of the lesson, we will normalize anyway.  Execute the code in the cell below to scale the feature. 
+
+```{r}
+# Create normalize function with a mean of 0 
+# and standard deviation of 1
+# Hint: mean(), sd()
+normalize <- function(x) (x - mean(x))/sd(x)
+
+# Add childHeightScaled using normalize function
+# to dataset
+# Hint: mutate(), normalize()
+GaltonFamilies <- GaltonFamilies %>% 
+  mutate (childHeightScaled = normalize(childHeight)) 
+
+# Explore summary of child columns
+# Hint: select(), starts_with(), summary()
+GaltonFamilies %>% 
+  select( starts_with("child")) %>% 
+  summary()
+```
+### Training the classifier
+
+With the data prepared, it is time to train the classifier. In this case, we will use the R **generalized linear model or glm**. We want to model the two-class or **binomial** relationship between the label and the feature as:
+
+$$gender \sim childHeightScaled$$
+
+We pick the binomial family, since we are preforming two-class classification. 
+
+The generalized linear model reports some fit statistics in terms of **deviance**. Deviance is a hard to grasp concept, so we will skip the formal mathematical definition. Rather, let's establish an intuitive understanding of what deviance means. Deviance is the difference in log likelihood of a model with respect to a **saturated model**. The saturated or reference model has a coefficient for each data point. We can compare deviance values to evaluate the fit of the model. Specifically, we can define the deviance:
+
+$$D_{model} = 2 \Bigg( log \Big( \frac{likelihood\ of\ model}{likelihood\ of\ staturated\ model} \Big) \Bigg)\\
+and\\
+D_{Null} = 2 \Bigg( log \Big( \frac{likelihood\ of\ Null\ model}{likelihood\ of\ staturated\ model} \Big) \Bigg)
+$$
+
+Where:
+
+- $D_{model}$ is the **deviance** of the **model**. 
+- $D_{Null}$ is the **deviance** of the **Null**. 
+- A **Null model** has only an intercept. In other words, the null model is just the average of the features. 
+- A **Saturated model** has the number of coefficients equal to the number of cases. Such a model is drastically over-fit, and therefore not useful for predictions. 
+
+We compare the deviance of the model being evaluated to the deviance of a model that just uses the average value of the label. The larger this difference the better the variation in the label is explained by the model. 
+
+Another metric which can be hard to grasp is the **Akaike information criterion (AIC)**. The AIC is based on concepts from information theory. The basic idea is to measure of the **likelihood** of the model, given the data, but adjusted for the **complexity of the model**. We can write AIC as:
+
+$$AIC = 2 k - 2 log(likelihood\ of\ model)\\
+where\\
+k = number\ of\ model\ parameters$$
+
+In other words, AIC is the log likelihood of the model penalized for complexity. The smaller the AIC the greater the likelihood of the model. Complex models with larger numbers of parameters have larger AIC. 
+
+The `summary` method for the model contains the following:  
+
+- The call used to compute the model being evaluate, which includes the model formula, the choice of distribution family, and the data frame used.
+- Quartiles, minimum and maximum value of the residuals. 
+- Table of model coefficients, one for each feature in the model, plus the intercept if included. The figures in this table are used to determine if the coefficients are significant. Models with coefficients which are not significant are overfit. Each coefficient has the following statistics which are used to determine if coefficients are significant:
+  - The coefficient values themselves.
+  - The standard error of each model coefficient. If the standard error is of the same magnitude (or larger) than the coefficient value, the coefficient is not significant. 
+  - Statistics for the hypothesis test on the model.
+- The Null deviance of the model.
+- Residual deviance of the model. We compare this value to the deviance of a Null model. The better the fit of the model, the greater the explanatory power of the model. 
+- AIC of the model. The smaller the AIC the more information the model provides. 
+
+Execute the code in the cell below which trains this model and prints a summary and the **confidence intervals** of the model coefficients. 
+
+
+```{r}
+# Create a glm binomial model of GaltonFamilies
+# for gender ~ childHeightScaled
+# Hint: glm(), binomial()
+height.mod <- glm(gender ~ childHeightScaled, 
+                  data = GaltonFamilies, 
+                  family = binomial())
+
+# View summary of model
+# Hint: summary()
+height.mod %>% summary()
+
+# Display the confidence intervals
+# of the model
+# Hint: confint()
+cat('Confidence intervals of coefficients \n')
+height.mod %>% confint()
+```
+
+Notice the following about the fit of this model:
+
+1. You can see that this model is over fit. The intercept term is not significant since the standard error is nearly as large as the coefficient value, the z-value is small, the p-value is large. Further, the confidence interval spans 0.
+2. The Null deviance is significantly larger than the residual deviance indicating the model has explanatory power. 
+3. The AIC and deviance statistics will be used to compare this model to other possible models.
+
+****
+# <font color="blue">Reduce overfitting</font>   
+
+The above model is clearly overfit. Let's update this model by removing the intercept. In the R formula language a `-1` in the formula removes the intercept. The updated formula to model `gender` by the child height without the intercept becomes:
+
+$$gender \sim childHeightScaled - 1$$
+
+**Hints:** To ensure the rest of this notebook behaves correctly it is important you make a **copy of the data frame** and assign the model to a **new name**.
+***
+
+
+```{r}
+# Make a copy of the dataset
+# called GF2
+GF2 <- GaltonFamilies
+
+# Run the logistic regression without the intercept
+# Hint: Add -1 to the formula
+height.mod2 <- glm(gender ~ childHeightScaled - 1 , 
+                   data = GF2, 
+                family=binomial())
+
+# View summary of model
+# Hint: summary()
+height.mod2 %>% summary()
+
+# Display the confidence intervals
+# of the model
+# Hint: confint()
+cat('Confidence intervals of coefficients \n')
+height.mod2 %>% confint ()
+```
+The new model does not seem to be over-fit. Notice that the one coefficient is significant. Further the Residual deviance and AIC are nearly the same as the over-fit model.
+
+### Scoring the model
+
+The code in the cell below computes the scores (predicted values) of the label and prints a view of the data frame. Execute this code and examine the results.
+
+```{r}
+# Add a score column from the predicted values of the 
+# original model height.mod
+# Hint: mutate(), predict()
+GaltonFamilies <- GaltonFamilies %>% 
+  mutate (score = predict(height.mod)) 
+
+# Explore results
+GaltonFamilies %>% glimpse()
+```
+Let's plot these score values stratified by the known label categories. Execute the code in the cell below and examine the resulting plots. 
+
+```{r}
+# Violin Plot x = gender, y = score
+# Include quantile lines
+# Hint: geom_violin(), draw_quantiles parameter
+GaltonFamilies %>% ggplot(aes(x = gender, y = score)) +
+  geom_violin ( draw_quantiles = c(0.25, 0.5, 0.75), 
+              fill = 'blue', alpha = 0.3, size = 1.0) +
+  labs(title="Model Score by Gender",
+       x="Gender of Adult Children", y="Score value")
+```
+The scores appear to separate the two categories of the label fairly well. As with the feature, the overlap is in the upper quartile of `female` and lower quartile of `male`. 
+
+The scores we have been working with are the raw values computed with the binomial glm model. We need to convert these raw scores to log likelihoods. To do so, we will apply the logistic transformation to the raw scores. The simple logistic transformation is defined as follows:
+
+
+$$f(x) = \frac{1}{1 + e^{-(x - x_0)}}$$
+
+The code in the cell below applies the logistic transformation and then creates violin plots stratified by the known categories of the label. Execute this code and examine the results.
+
+```{r}
+# Apply logistic transformation of score
+# to a new column score.gender.prob
+# Hint: mutate(), exp()
+GaltonFamilies = GaltonFamilies %>% 
+                    mutate(score.gender.prob =  exp (score)/(1 + exp(score))) 
+
+# Explore results
+# Hint: glimpse()
+GaltonFamilies %>% glimpse()
+```
+
+```{r}
+# Violin Plot of x = gender, y = score.gender
+# with quartile lines
+# Hint: geom_violin() with draw_quantiles parameter
+ggplot(GaltonFamilies, aes(gender, score.gender.prob)) +
+  geom_violin ( draw_quantiles  = c(0.25, 0.5, 0.75), 
+              fill = 'blue', alpha = 0.3, size = 1.0) +
+  labs(title="Model Score by Gender", 
+       x="Gender of Adult Children", y="Score value")
+```
+
+The separation of the two categories of the label is even more clear following the logistic transformation. 
+
+As a next step we will transform the numeric score to a category of `male` and `female`. In this case, we will set the threshold at `0.5`, which gives equal weight to each category. Execute the code in the cell below and review the results. 
+
+```{r}
+# Create a score.gender column 
+# if score.gender.prob is > 0.5 then male else female
+# Convert the column to a factor
+# Hint: if_else(), as_factor()
+GaltonFamilies <- GaltonFamilies %>% 
+  mutate(score.gender = if_else (score.gender.prob > 0.5 , 'male', 'female') %>% 
+           as_factor ()) 
+
+# Explore results
+# Hint: glimpse()
+GaltonFamilies %>% glimpse()
+
+# Show table frequency of score.gender
+# Hint: table()
+GaltonFamilies$score.gender %>% table ()
+```
+
+These results are as expected. You can see the numbers of cases classified as `female` and `male`. 
+
+## Evaluation of Classification Models
+
+Now that we have created a classification model, how do we go about evaluating the performance of the model? Classifier models are evaluated by using various metrics measuring the correct and incorrect classifications. In practice, one should **always use multiple metrics to evaluate classifiers**. 
+
+The outcomes of two-class classification cases can be classified as follows:
+
+- **True positive (TP)** cases are positive cases that are correctly classified as positive.
+- **True negative (TN)** cases are negative cases that are correctly classified as negative.
+- **False positive (FP)** cases are negative cases that are incorrectly classified as positive. 
+- **False negative (FN)** cases are positive cases that are incorrectly classified as negative. 
+
+We arrange the counts of these cases in a **confusion matrix**, for easy understanding of the numbers of correct and incorrect cases. For the binary case, the confusion matrix is organized as shown here:
+
+$$
+\begin{matrix} 
+Prediction & Positive & Negative \\
+Positive & TP & FP \\
+Negative & FN & TN
+\end{matrix}
+$$
+
+The confusion matrix is useful, but we need statistics that summarize various performance characteristics of classifiers. Many such metrics have been invented. In this lesson we will only work with the following four metrics:
+
+$$
+Accuracy = \frac{(TP + TN)} {(TP + FP + TN + FN)} = \frac{correctly\ classified\ cases}{all\ cases}\\
+Precision = \frac{TP}{(TP + FP)} = \frac{correctly\ classified\ positive\ cases}{all\ cases\ classified\ as\ positive}\\
+Recall = \frac{TP}{(TP + FN)} = \frac{correctly\ classified\ positive\ cases}{all\ actual\ positive\ cases}\\
+F1 =  \frac{2 TP} {(2 TP + FP + FN)}
+$$
+
+In words, we can describe these metrics as:
+
+- **Accuracy** is the proportion of cases correctly classified. 
+- **Precision** is the proportion of correctly classified positive cases.
+- **Recall** is the ratio of correctly predicted positive cases to total actual positive cases. 
+- **F1** is a weighted average of Precision and Recall. 
+
+The `confusionMatrix` function from the R caret package computes the confusion matrix along with a large number of performance metrics. Execute the coded below and examine the results. 
+
+```{r}
+# Calculate the confusion matrix for 
+# Reference (actual) values: GaltonFamilies$gender and 
+# Predicted values: GaltonFamilies$score.gender
+# Hint: caret::confusionMatrix()
+caret:: confusionMatrix (data = GaltonFamilies$score.gender, 
+                       reference = GaltonFamilies$gender,
+                       mode = "prec_recall")
+```
+
+Examine these results and notice the following for some of these metrics:
+
+1. The confusion matrix shows the number of correctly, and incorrectly classified cases. Most cases are correctly classified. 
+2. The accuracy of about 85% indicates that most cases are correctly classified. 
+3. The precision of .87 is larger than the recall of 0.83, indicating that proportion of positive (female) cases correctly classified is less than the proportion of the negative (male) cases correctly classified. 
+4. The F1 score is about 0.85, between the precision and the recall, and similar to the accuracy. 
+
+Overall, these results are promising. Our simple classifier is doing a reasonably good job. 
+
+# <font color="blue">Test with model without inercept term</font>     
+
+Previously, we trained and evaluated the fit of a second model that was not over-fit by removing the intercept term. Now, let's evaluate the classification performance of this model. You will score your model and then compute the confusion matrix and other performance metrics. 
+
+```{r}
+# Use the prior steps as a guide to updating the code below
+
+# Create a predicted score column
+GF2 <- GF2 %>% mutate(score = predict(height.mod2)) 
+
+# Create a logistic probability score
+GF2 <- GF2 %>% mutate(score.gender.prob = exp(score)/(1 + exp(score))) 
+
+# Create a male / female factor column based on probability
+GF2 <- GF2 %>% mutate(score.gender = if_else(score.gender.prob > 0.5, 'male', 'female') %>% 
+                        as_factor()) 
+
+# Display the frequency table
+table (GF2$score.gender)
+
+# Display the confusion matrix
+caret ::confusionMatrix(data = GF2$score.gender, 
+                       reference = GF2$gender,
+               mode = "prec_recall")
+```
+
+Compare the results with the prior model. Notice it is slightly different moving a couple female missclassifications to male. 
+
+# Summary
+We created two classification models of gender based on child height and evaluated their performance with a confusion matrix.
