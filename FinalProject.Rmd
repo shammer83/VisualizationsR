@@ -1,0 +1,446 @@
+---
+title: "Final Project"
+output: html_notebook
+---
+
+# Assignment Instructions
+
+Create a multivariate prediction model and perform data analyis of a dataset you choose. This can be either a linear regression, or a classification. 
+This includes:
+
+* 1 point - All code blocks run without error. 
+* 2 points - Create 2 charts exploring the data with respect to the prediction variable (label)
+* 2 points - Create a hypothesis and perform a t.test to reject or fail to reject that hypothesis
+* 1 point - Split the data into training set and testing set for each model and wrangle the data as desired
+* 3 points - Create 2 prediction models of your chosen type (regression | classification), with at least one multivariate model  including visualizing the results of each model
+* 2 points - Compare the performance of your models
+* 1 point - Include a written analysis of your prediction referencing using data to support your conclusions.
+
+The above is what is required to achieve full credit for the assignment. You are welcome and encouraged to go above and beyond these requirements, just be sure these requirements are fully met first. 
+
+## R Features
+* You are welcome to use any feature covered in this class
+* You are welcome to load any library that is already installed in the virtual environment, but you cannot install new packages. You can also reference installed packages by library name::function_name to avoid naming conflicts
+* Use set.seed() as necessary to ensure reproducability as the instructor / TA will run the code to grade it
+* Ensure your code runs to completion within 60 minutes from start to finish. You may save and load pre-trained models with your instructor's prior permission if you feel you need to exceed this time limit.
+
+## Dataset
+* Your choice. Be sure the data lends itself to supervised learning, with a label and is appropriate for either regression or classification. Remove any personally identifiable data. 
+* Suggested data source [UCI Machine Learning Repository](http://mlr.cs.umass.edu/ml/datasets.html) and look for Data Types == Multivariate and Default Task in (Classification, Regression)
+* The data would need to be uploaded to the virtual environment such that the instructor or TA can run the code without error. 
+
+```{r}
+# Load libraries
+# Load any additional libraries. No install.package()
+library(lubridate)
+library(tidyverse)
+
+# set.seed for reproducible results
+set.seed(1222) 
+```
+
+# Load and explore data structure
+```{r}
+
+getwd()
+
+red_wine <- read_delim('winequality-red.csv', col_names = TRUE, delim = ";")
+
+white_wine <- read_delim('winequality-white.csv', col_names = TRUE, delim = ";")
+
+red_wine %>% glimpse()
+
+white_wine %>% glimpse()
+
+cat("\n***Summary of the Red***\n")
+red_wine %>% summary()
+
+cat("\n***Summary of the White***\n")
+white_wine %>% summary()
+```
+
+# Data processing
+Create a new data frame(s) with appropriate data types and data cleaning for the data.
+```{r}
+
+#duplicate original data frames incase I need to return to original data
+white_copy <- white_wine 
+red_copy <- red_wine 
+
+white_copy <- white_copy %>% 
+  mutate(color = 'white')%>% 
+  mutate(color = as.factor(color),
+         quality = as.factor(quality))
+
+red_copy <- red_copy %>%
+  mutate(color = 'red') %>%
+  mutate(color = as.factor(color),
+         quality = as.factor(quality))
+
+# combine the rde and white wine into a single data set
+wine_df <- bind_rows(white_copy, red_copy)
+
+
+# verify the correct concatination of the two subsets into one set
+nrow(white_copy) + nrow(red_copy)  ==  nrow(wine_df)
+
+
+# remove rows that have 'NA'
+wine_df <- wine_df[complete.cases(wine_df),]
+
+# remove duplicate rows
+wine_df <- wine_df[!duplicated(wine_df),]
+
+# see how many red and white wine observations
+wine_df$color %>% table()
+
+#clean the dataframes column names by removing spaces
+names(wine_df) <- str_replace_all(names(wine_df), c(" " = "." , "," = "" ))
+
+### make our target labels 
+## is.topshelf: this has three levels for data exploration purposes
+#is.topshelf.bin: binary class of high or low for logistic regression modeling 
+wine_df <- wine_df %>%
+  mutate(is.topshelf = if_else(quality > 7, 'high', if_else(quality > 5, 'medium', 'low') ) %>% as.factor,
+         is.topshelf.bin = if_else(quality >  6, 'high', 'low' ) %>% as.factor,
+         quality = quality %>% as.factor,
+         color = color %>% as.factor)
+
+wine_df %>% glimpse()
+```
+
+# Explore prediction variable
+
+## Chart 1 
+Explore catagorical variables to see what continuous variables may indicate differences in wine quality
+
+```{r}
+ggplot(data = wine_df, mapping = aes( x = alcohol, y = fixed.acidity, color = as.factor(quality))) + 
+   geom_jitter(alpha = 0.3) + 
+   geom_smooth(method = "lm", se = FALSE) +
+  facet_grid(~quality)
+
+ggplot(data = wine_df, mapping = aes( x = alcohol, y = volatile.acidity, color = quality)) + 
+   geom_jitter(alpha = 0.2) + 
+   geom_smooth(method = "lm", se = FALSE) +
+  facet_grid(~quality)
+
+ggplot(data = wine_df, mapping = aes( x = alcohol, y = residual.sugar, color = quality)) + 
+   geom_jitter(alpha = 0.2) + 
+   geom_smooth(method = "lm", se = FALSE) +
+  facet_grid(~quality)
+```
+
+
+
+## Chart 2
+Compare distributions of coninuous predictors and looking for patterns that would help me separate my target class
+```{r}
+
+gg_boxplot <- function(data, x, y_col){
+  
+  plt <- data %>%
+    ggplot(aes_string(x = x , y = y_col, fill = x ))+
+    geom_boxplot()+
+    ggtitle(str_c(y_col, " vs ", x ))
+  
+  plt %>% print()
+  
+}
+
+y_col <- wine_df %>% select(-quality, -color, - is.topshelf.bin , -is.topshelf) %>% names()
+
+y_col %>% walk(gg_boxplot, x = 'is.topshelf', data = wine_df)
+
+y_col %>% walk(gg_boxplot, x = 'is.topshelf.bin', data = wine_df)
+```
+
+## Chart 3
+```{r}
+top_shelf <- wine_df %>% filter(is.topshelf == 'high')
+
+mid_shelf <-wine_df %>% filter(is.topshelf == 'medium')
+
+bottom_shelf <- wine_df %>% filter(is.topshelf == 'low')
+
+prem_mean_alcohol <- mean(top_shelf$alcohol)
+
+bottom_mean_alcohol <- mean(bottom_shelf$alcohol)
+
+mid_mean_alcohol <- mean(mid_shelf$alcohol)
+
+wine_df %>% ggplot(aes(x=alcohol %>% seq_along() %>% sample(), y= alcohol )) + 
+   geom_jitter() + 
+   geom_smooth(method="lm") +
+   geom_hline(yintercept = prem_mean_alcohol, color = 'red')+
+  geom_hline(yintercept = bottom_mean_alcohol, color = 'orange')+
+  geom_hline(yintercept = mid_mean_alcohol, color = 'purple' )+
+   theme_classic() +
+   labs(title="Natural sequence wine alcohol levels data",
+       subtitle=" topshelf wine has a higher average alcohol content than lower quality")
+
+```
+## Chart 3
+
+-- look at the distribution plots to find sepearation in our binary class of 'high' and 'low' quality wines
+```{r}
+# Create a list of columns of interest
+nums <- unlist(lapply(wine_df, is.numeric))
+
+cols <- wine_df[, nums] %>% names()
+
+print(cols)
+
+plot.hists <- function(col, df, bins = 20){
+  p1 <- ggplot(df, aes_string(col, color = 'is.topshelf.bin', fill = 'is.topshelf.bin' )) + 
+    geom_density(size = 1, alpha = 0.2) +
+    labs(title=str_c("Histogram and density function \n for ", col), 
+         x=str_c("value of ", col))
+  
+  # Print the plot
+  p1 %>% print()
+}
+
+cols %>% walk(plot.hists, wine_df)
+```
+
+# Hypothesis Testing
+
+## t-test 
+t-testing density and alcohol as predictors
+```{r}
+
+top_shelf <- wine_df %>% filter(is.topshelf.bin == 'high')
+
+bottom_shelf <- wine_df %>% filter(is.topshelf.bin == 'low')
+
+cat("\n**** Top Shelf > Bottom Shelf alcohol content")
+t.test(top_shelf$alcohol, bottom_shelf$alcohol, conf.level = 0.95, alternative = "greater")
+
+cat("\n**** Top Shelf > Bottom Shelf density content")
+t.test(top_shelf$density, bottom_shelf$density, conf.level = 0.95, alternative = "two.sided")
+
+```
+
+## F-testing
+$H_o: \sigma_1^2 = \sigma_2^2$
+$H_1: \sigma_1^2 \neq \sigma_2^2$
+
+compare
+
+```{r}
+top.sample <- sample(top_shelf$density, 500, replace = TRUE) 
+
+bottom.sample <- sample(bottom_shelf$density, 500, replace = TRUE)
+
+var.test(top.sample, bottom.sample, ratio = 1, alternative = "two.sided" )
+
+```
+# Split into train / test sets
+## Data Normalization
+```{r}
+# normalize function that centers to 0 and scales to standard deviations
+normalize <- function(x) (x - mean(x))/sd(x)
+
+#apply normalize function to transform numeric columns
+
+wine_df <- wine_df %>% mutate_at(vars(-is.topshelf.bin, -color, -quality), normalize)
+
+wine_df %>% glimpse() 
+
+wine_df %>% summary()
+
+```
+```{r}
+set.seed(1222)
+
+#droping citric.acid.log because it has NA
+#wine_df <- wine_df[,colSums(is.na(wine_df)) < nrow(wine_df)]
+
+#droping quality and the other target for multiclassification
+wine_df <- wine_df[, !(wine_df%>% names() %in% c('quality', 'is.topshelf'))]
+
+wine.train <- wine_df %>%
+  sample_frac(0.7)
+
+wine.test <- wine_df %>%
+  setdiff(wine.train)
+
+print(str_c("wine.train rows: ", nrow(wine.train)))
+print(str_c("wine.test rows: ", nrow(wine.test)))
+print(str_c("wine_df rows: ", nrow(wine_df)))
+
+# Compare wine.train + wine.test to wine_df
+nrow(wine.test) + nrow(wine.train) == nrow(wine_df)
+```
+```{r}
+
+wine.train %>% glimpse() 
+
+wine.train %>% summary()
+```
+
+# Train and test models
+
+## Model 1 univariate
+Update this text to summarize this result.
+```{r}
+wine.mod1 <- glm(is.topshelf.bin ~ alcohol , data = wine.train, family = binomial())
+
+wine.mod1 %>% summary()
+
+wine.mod1 %>% confint()
+
+wine.test$score <- predict(wine.mod1, newdata = wine.test)
+
+binwidth <- ( max(wine.test[, 'score']) - min(wine.test[, 'score'])) / 60
+
+ggplot(wine.test, aes(x = score)) + 
+  geom_dotplot (dotsize = 0.5, method = "histodot", binwidth = binwidth) +
+  facet_wrap ( ~ is.topshelf.bin) +
+  labs(title="Model Score by low or high",
+       x="Score count", y="Count")
+
+wine.test <- wine.test %>% mutate(score.pred = if_else(score > 0.5, "low", "high") %>% as.factor)
+
+wine.test %>% glimpse()
+
+cat("\n**** confusion matrix****\n")
+
+caret::confusionMatrix (data = wine.test$score.pred , 
+                       reference = wine.test$is.topshelf.bin, 
+                       mode = "prec_recall")
+
+```
+## Model 2 
+
+### Two predictive variables
+```{r}
+wine.mod2 <- glm(is.topshelf.bin ~ alcohol+density, data = wine.train, family = binomial())
+
+wine.mod2 %>% summary()
+
+wine.mod2 %>% confint()
+
+wine.test$score <- predict(wine.mod2, newdata = wine.test)
+
+binwidth <- ( max(wine.test[, 'score']) - min(wine.test[, 'score'])) / 60
+
+ggplot(wine.test, aes(x = score)) + 
+  geom_dotplot (dotsize = 0.5, method = "histodot", binwidth = binwidth) +
+  facet_wrap ( ~ is.topshelf.bin) +
+  labs(title="Model Score by low or high",
+       x="Score count", y="Count")
+
+wine.test <- wine.test %>% mutate(score.pred = if_else(score > 0.5, "low", "high") %>% as.factor)
+
+wine.test %>% glimpse()
+
+cat("\n**** confusion matrix****\n")
+
+caret::confusionMatrix (data = wine.test$score.pred , 
+                       reference = wine.test$is.topshelf.bin, 
+                       mode = "prec_recall")
+
+
+```
+
+## Model 3
+multivariate
+```{r}
+
+
+wine.mod3 <- glm(is.topshelf.bin ~ . , data = wine.train, family = binomial())
+
+wine.mod3 %>% summary()
+
+wine.test$score <- predict(wine.mod3, newdata = wine.test)
+
+binwidth <- ( max(wine.test[, 'score']) - min(wine.test[, 'score'])) / 60
+
+ggplot(wine.test, aes(x = score)) + 
+  geom_dotplot (dotsize = 0.5, method = "histodot", binwidth = binwidth) +
+  facet_wrap ( ~ is.topshelf.bin) +
+  labs(title="Model Score by low or high",
+       x="Score count", y="Count")
+
+wine.test <- wine.test %>% mutate(score.pred = if_else(score > 0.5, "low", "high") %>% as.factor)
+
+cat("\n**** confusion matrix****\n")
+
+caret::confusionMatrix (data = wine.test$score.pred , 
+                       reference = wine.test$is.topshelf.bin, 
+                       mode = "prec_recall")
+
+```
+## Model 4 
+
+Remove color and citric acid predictors since their coeffcients were significant in the previous model
+```{r}
+
+feats <- c('citric.acid', 'color')
+
+wine.train2<- wine.train %>%select(-citric.acid, -color)
+
+wine.mod4 <- glm(is.topshelf.bin ~ . , data = wine.train2, family = binomial())
+
+wine.mod4 %>% summary()
+
+wine.test$score <- predict(wine.mod4, newdata = wine.test)
+
+binwidth <- ( max(wine.test[, 'score']) - min(wine.test[, 'score'])) / 60
+
+ggplot(wine.test, aes(x = score)) + 
+  geom_dotplot (dotsize = 0.5, method = "histodot", binwidth = binwidth) +
+  facet_wrap ( ~ is.topshelf.bin) +
+  labs(title="Model Score by low or high",
+       x="Score count", y="Count")
+
+wine.test <- wine.test %>% mutate(score.pred = if_else(score > 0.5, "low", "high") %>% as.factor)
+
+cat("\n**** confusion matrix****\n")
+
+caret::confusionMatrix (data = wine.test$score.pred , 
+                       reference = wine.test$is.topshelf.bin, 
+                       mode = "prec_recall")
+
+```
+# Model Performance Comparison
+
+The first model (univariate, performed the best) 
+
+You can adjust the trade-off between errors in the two label categories by changing the threshold.
+
+```{r}
+
+wine.mod1 <- glm(is.topshelf.bin ~ alcohol , data = wine.train, family = binomial())
+
+wine.mod1 %>% summary()
+
+wine.mod1 %>% confint()
+
+wine.test$score <- predict(wine.mod1, newdata = wine.test)
+
+
+# Create a test.threshold fucntion that take a threshold and a data frame
+test.threshold <- function(thresh = 0.5, df) {
+  
+  # Calculat the new prediction based on the threshold
+  df <- df %>% mutate(score.pred = if_else(df$score < thresh, 'high', 'low') %>% as.factor())
+  cat('\nFor threshold of ', thresh, ' performance is: \n')
+  
+  print(caret::confusionMatrix(data = df$score.pred, reference = df$is.topshelf.bin, mode = "prec_recall"))
+  cat('\n')
+}
+# Create vector of thresholds to try
+threshs = c(.35, .40, .45, .5, .55)
+# Call test.threshold function for each value of threshs
+# Hint: walk()
+threshs %>% walk (test.threshold, wine.test )
+```
+
+# Analysis and Conclusions
+
+The most accurate model was univariate (with a single predictor of alcohol content) and a threshold of 0.4.  It gave peformed the best in terms of the number of True positives and True Negatives (with a positive class of high quality and negetive class of low quality). 
+
+For binary classification a single predictive variable worked well.  However other machine learning models like a decision tree or KNN may work better for multivariate models.  
